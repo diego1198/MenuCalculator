@@ -1,11 +1,15 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 import os
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///menu.db'
 db = SQLAlchemy(app)
+
+# Configurar zona horaria
+tz = pytz.timezone('America/Bogota')
 
 class MenuItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -18,6 +22,10 @@ class Order(db.Model):
     items = db.Column(db.String(500), nullable=False)  # JSON string of items
     total = db.Column(db.Float, nullable=False)
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def get_local_time(self):
+        utc_time = self.timestamp.replace(tzinfo=pytz.UTC)
+        return utc_time.astimezone(tz)
 
 with app.app_context():
     db.create_all()
@@ -96,20 +104,41 @@ def create_order():
 
 @app.route('/api/sales', methods=['GET'])
 def get_sales():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
     date = request.args.get('date')
-    if date:
-        orders = Order.query.filter(
-            db.func.date(Order.timestamp) == date
-        ).all()
-    else:
-        orders = Order.query.all()
     
-    return jsonify([{
-        'id': order.id,
-        'items': order.items,
-        'total': order.total,
-        'timestamp': order.timestamp.strftime('%Y-%m-%d %H:%M:%S')
-    } for order in orders])
+    query = Order.query
+    
+    if date:
+        # Convertir la fecha a UTC para la consulta
+        start_date = datetime.strptime(date, '%Y-%m-%d')
+        start_date = tz.localize(start_date)
+        end_date = start_date + timedelta(days=1)
+        query = query.filter(Order.timestamp >= start_date, Order.timestamp < end_date)
+    
+    # Obtener el total de registros
+    total = query.count()
+    
+    # Obtener los pedidos paginados
+    orders = query.order_by(Order.timestamp.desc()).paginate(page=page, per_page=per_page)
+    
+    return jsonify({
+        'orders': [{
+            'id': order.id,
+            'items': order.items,
+            'total': order.total,
+            'timestamp': order.get_local_time().strftime('%Y-%m-%d %H:%M:%S')
+        } for order in orders.items],
+        'pagination': {
+            'total': total,
+            'pages': orders.pages,
+            'current_page': orders.page,
+            'per_page': per_page,
+            'has_next': orders.has_next,
+            'has_prev': orders.has_prev
+        }
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=4036, debug=True) 

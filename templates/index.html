@@ -107,15 +107,61 @@
 
         <div id="sales-section" style="display: none;">
             <div class="card">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">Resumen de Ventas</h5>
+                <div class="card-header bg-primary text-white">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">Resumen de Ventas</h5>
+                        <div class="d-flex align-items-center">
+                            <input type="date" class="form-control" id="sales-date">
+                            <button class="btn btn-light ms-2" onclick="loadSales()">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <input type="date" class="form-control" id="sales-date">
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">Total de Pedidos</h6>
+                                    <h3 id="total-orders">0</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">Ventas Totales</h6>
+                                    <h3 id="total-sales">$0.00</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">Promedio por Pedido</h6>
+                                    <h3 id="average-order">$0.00</h3>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div id="sales-list">
                         <!-- Sales will be loaded here -->
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <div>
+                            <select class="form-select" id="per-page" onchange="loadSales()">
+                                <option value="10">10 por página</option>
+                                <option value="25">25 por página</option>
+                                <option value="50">50 por página</option>
+                                <option value="100">100 por página</option>
+                            </select>
+                        </div>
+                        <nav aria-label="Navegación de páginas">
+                            <ul class="pagination mb-0" id="pagination">
+                                <!-- Pagination will be loaded here -->
+                            </ul>
+                        </nav>
                     </div>
                 </div>
             </div>
@@ -126,6 +172,8 @@
     <script>
         let selectedItems = [];
         let menuItems = [];
+        let currentPage = 1;
+        let currentDate = null;
 
         // Load menu items
         async function loadMenu() {
@@ -260,24 +308,105 @@
         }
 
         // Load sales
-        async function loadSales(date) {
-            const url = date ? `/api/sales?date=${date}` : '/api/sales';
-            const response = await fetch(url);
-            const sales = await response.json();
+        async function loadSales(page = 1) {
+            currentPage = page;
+            const perPage = document.getElementById('per-page').value;
+            const date = document.getElementById('sales-date').value;
+            currentDate = date;
             
+            const url = `/api/sales?page=${page}&per_page=${perPage}${date ? `&date=${date}` : ''}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            const sales = data.orders;
+            const pagination = data.pagination;
+            
+            // Actualizar estadísticas
+            document.getElementById('total-orders').textContent = pagination.total;
+            const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
+            const averageOrder = sales.length > 0 ? totalSales / sales.length : 0;
+
+            document.getElementById('total-sales').textContent = `$${totalSales.toFixed(2)}`;
+            document.getElementById('average-order').textContent = `$${averageOrder.toFixed(2)}`;
+            
+            // Actualizar lista de ventas
             const salesList = document.getElementById('sales-list');
-            salesList.innerHTML = sales.map(sale => `
-                <div class="card mb-2">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between">
-                            <h6 class="card-title">Pedido #${sale.id}</h6>
-                            <small class="text-muted">${sale.timestamp}</small>
+            salesList.innerHTML = sales.map(sale => {
+                const items = JSON.parse(sale.items.replace(/'/g, '"'));
+                const itemsList = items.map(item => 
+                    `<div class="d-flex justify-content-between">
+                        <span>${item.name} x${item.quantity}</span>
+                        <span>$${(item.price * item.quantity).toFixed(2)}</span>
+                    </div>`
+                ).join('');
+
+                return `
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-0">Pedido #${sale.id}</h6>
+                                    <small class="text-muted">${sale.timestamp}</small>
+                                </div>
+                                <h5 class="mb-0 text-primary">$${sale.total.toFixed(2)}</h5>
+                            </div>
                         </div>
-                        <p class="card-text">${sale.items}</p>
-                        <h6 class="text-end">Total: $${sale.total.toFixed(2)}</h6>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    ${itemsList}
+                                </div>
+                                <div class="col-md-4 text-end">
+                                    <div class="text-muted">
+                                        <small>Subtotal: $${sale.total.toFixed(2)}</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
+
+            // Actualizar paginación
+            updatePagination(pagination);
+        }
+
+        // Update pagination
+        function updatePagination(pagination) {
+            const paginationElement = document.getElementById('pagination');
+            let paginationHTML = '';
+
+            // Botón anterior
+            paginationHTML += `
+                <li class="page-item ${!pagination.has_prev ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="loadSales(${pagination.current_page - 1})" ${!pagination.has_prev ? 'tabindex="-1"' : ''}>
+                        <i class="fas fa-chevron-left"></i>
+                    </a>
+                </li>
+            `;
+
+            // Números de página
+            const startPage = Math.max(1, pagination.current_page - 2);
+            const endPage = Math.min(pagination.pages, pagination.current_page + 2);
+
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHTML += `
+                    <li class="page-item ${i === pagination.current_page ? 'active' : ''}">
+                        <a class="page-link" href="#" onclick="loadSales(${i})">${i}</a>
+                    </li>
+                `;
+            }
+
+            // Botón siguiente
+            paginationHTML += `
+                <li class="page-item ${!pagination.has_next ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="loadSales(${pagination.current_page + 1})" ${!pagination.has_next ? 'tabindex="-1"' : ''}>
+                        <i class="fas fa-chevron-right"></i>
+                    </a>
+                </li>
+            `;
+
+            paginationElement.innerHTML = paginationHTML;
         }
 
         // Event Listeners
@@ -292,7 +421,11 @@
             loadSales();
         });
         document.getElementById('sales-date').addEventListener('change', (e) => {
-            loadSales(e.target.value);
+            currentDate = e.target.value;
+            loadSales(1);
+        });
+        document.getElementById('per-page').addEventListener('change', () => {
+            loadSales(1);
         });
 
         // Initial load
